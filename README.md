@@ -9,4 +9,6 @@ and ships this data out to an influxdb database for analysis.
 Dependencies: cAssembler requires each slave in the cluster to run an instance of cAdvisor. 
 The framework docker-no-executor-framework launches a docker container running cAdvisor on a mesos slave 
 //todo: change framework to launch one per slave, as opposed to the first offered resource
-cAssembler also requires libcurl to be installed. 
+
+CAssembler ports it data to an influxdb database Mesos, which by default is set to username root, password root. 
+cAssembler also uses the libcurl library. 

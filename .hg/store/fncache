@@ -1,0 +1,14 @@
+data/Makefile.i
+data/cadvisor_sources.cc.i
+data/Makefile.dependencies.i
+data/container.h.i
+data/cAdvisor.cc.i
+data/cAssembler.o.i
+data/cAssembler.o.d
+data/cadvisor_sources.o.i
+data/cAssembler.i
+data/cAdvisor.h.i
+data/cAssembler.d
+data/cAssembler.cc.i
+data/cadvisor-stats.h.i
+data/cadvisor-sources.h.i

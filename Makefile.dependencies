@@ -1,0 +1,4 @@
+cAssembler.o: cAssembler.cc cadvisor-sources.h cadvisor-stats.h \
+ container.h
+cadvisor_sources.o: cadvisor_sources.cc cadvisor-stats.h container.h \
+ cadvisor-sources.h

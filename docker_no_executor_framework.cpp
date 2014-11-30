@@ -17,7 +17,7 @@
  */
 
 #include <libgen.h>
-
+#include <set>
 #include <iostream>
 #include <string>
 
@@ -46,7 +46,7 @@ class DockerNoExecutorScheduler : public Scheduler
 {
 public:
   DockerNoExecutorScheduler()
-    : tasksLaunched(0), tasksFinished(0), totalTasks(1) {}
+    : current_slaves(), tasksLaunched(0), tasksFinished(0), totalTasks(1) {}
 
   virtual ~DockerNoExecutorScheduler() {}
 
@@ -67,13 +67,13 @@ public:
     cout << "." << flush;
     for (size_t i = 0; i < offers.size(); i++) {
       const Offer& offer = offers[i];
-
-      // Lookup resources we care about.
-      // TODO(benh): It would be nice to ultimately have some helper
-      // functions for looking up resources.
       double cpus = 0;
       double mem = 0;
-
+      if(current_slaves.find(offer.hostname())!=current_slaves.end()){
+		cout << "rejecting offer on host " << offer.hostname() << "Because cAdvisor has already launched here." << endl;
+		continue; 
+	}
+	current_slaves.insert(offer.hostname());
       for (int i = 0; i < offer.resources_size(); i++) {
         const Resource& resource = offer.resources(i);
         if (resource.name() == "cpus" &&
@@ -86,12 +86,11 @@ public:
       }
 
       // Launch tasks.
-      vector<TaskInfo> tasks;
-      while (tasksLaunched < totalTasks &&
-             cpus >= CPUS_PER_TASK &&
-             mem >= MEM_PER_TASK) {
+  
+      if(cpus >= CPUS_PER_TASK && mem >= MEM_PER_TASK) {
+       vector<TaskInfo> tasks;
         int taskId = tasksLaunched++;
-
+        current_slaves.insert(offer.hostname());
         cout << "Starting task " << taskId << " on "
              << offer.hostname() << endl;
 
@@ -99,7 +98,7 @@ public:
         task.set_name("Task " + lexical_cast<string>(taskId));
         task.mutable_task_id()->set_value(lexical_cast<string>(taskId));
         task.mutable_slave_id()->MergeFrom(offer.slave_id());
-        task.mutable_command()->set_value("while true; do echo hello world; sleep 1; done");
+        task.mutable_command()->set_value("while true; sleep 1; done");
 	
         // Use Docker to run the task.
         ContainerInfo* container = task.mutable_container(); 
@@ -117,16 +116,10 @@ public:
         vol3->set_container_path("/sys");
 	vol3->set_host_path("/sys");
         vol3->set_mode(Volume::RO); 
-       Volume* vol4 = container->add_volumes();
+        Volume* vol4 = container->add_volumes();
         vol4->set_container_path("/var/lib/docker");
         vol4->set_mode(Volume::RO);
 	vol4->set_host_path("/var/lib/docker/");
-
-	// "/var/run:/var/run:rw", "/sys:/sys:ro", "/var/lib/docker/:/var/lib/docker:ro");
-//	ContainerInfo::DockerInfo::PortMapping portMapping;
-//	portMapping.set_host_port(8080);
-  //	portMapping.set_container_port(8080);
-    //    container->mutable_docket()->add_port_mappings()->CopyFrom(portMapping);
 	Resource* resource;
 
         resource = task.add_resources();
@@ -140,13 +133,15 @@ public:
         resource->mutable_scalar()->set_value(MEM_PER_TASK);
 
         tasks.push_back(task);
+        driver->launchTasks(offer.id(), tasks);
 
         cpus -= CPUS_PER_TASK;
         mem -= MEM_PER_TASK;
       }
-
-      driver->launchTasks(offer.id(), tasks);
-    }
+      else{
+	cout << "rejecting offer due to insufficient resources." << endl;
+	}
+      }
   }
 
   virtual void offerRescinded(SchedulerDriver* driver,
@@ -180,6 +175,7 @@ public:
   virtual void error(SchedulerDriver* driver, const string& message) {}
 
 private:
+  std::set<string> current_slaves;
   int tasksLaunched;
   int tasksFinished;
   int totalTasks;
@@ -199,8 +195,6 @@ int main(int argc, char** argv)
   framework.set_user(""); // Have Mesos fill in the current user.
   framework.set_name("Docker No Executor Framework (C++)");
 
-  // TODO(vinod): Make checkpointing the default when it is default
-  // on the slave.
   if (os::hasenv("MESOS_CHECKPOINT")) {
     cout << "Enabling checkpoint for the framework" << endl;
     framework.set_checkpoint(true);

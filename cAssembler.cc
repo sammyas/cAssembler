@@ -1,14 +1,12 @@
 #include <string> 
 #include <stdlib.h>
 #include "cadvisor-sources.h"
-#include "cadvisor-stats.h"
 #include <chrono>
 #include <vector> 
 #include <map>
 #include <set>
 #include <iostream>
 #include <curl/curl.h>
-#include "container.h"
 #include <thread> 
 #include <mutex>
 #include <limits>
@@ -20,7 +18,7 @@ static const int CONTAINER_UPDATE_FREQUENCY=60;
 static const int INFLUXDB_UPDATE_FREQUENCY=60; 
 static const string USERNAME="root";
 static const string PASSWORD="root";
-static const string INFLUXDB_POINTS= "\",\n \"columns\": [\"sequence_number\", \"memory\", \"cpu\",  \"timestamp\"],\n \"points\": [\n ";
+static const string INFLUXDB_POINTS= "\",\n \"columns\": [\"sequence_number\", \"slave_ip\",  \"memory\", \"cpu\",  \"timestamp\"],\n \"points\": [\n ";
 static mutex oslock;
 void findcontainers(string data, struct cAdvisorStats *stats);
 string retrieveCadvisorAPI(string address);
@@ -59,8 +57,8 @@ vector<struct Stat> parseCurrentStats(string data){
 		 double memstat=stod(memory);
 		 if(prevMem!=0){
  	  		 struct Stat new_stat;
-		   	 new_stat.mem=memstat;
-			 new_stat.cpu=cpustat-prevMem;
+		   	 new_stat.values[MEMORY]=memstat;
+			 new_stat.values[CPU]=cpustat-prevMem;
 			 new_stat.timestamp=timestamp;
 			 stats.push_back(new_stat);
 		}
@@ -75,7 +73,7 @@ vector<struct Stat> parseCurrentStats(string data){
 * It then sleeps for 60 seconds until new statistics become available. 
 */
 void retrieveContainerStats(string name, struct cAdvisorStats* stats){
-	string address = stats->slave_ip + ":" + to_string(stats->port) + "/api/v1.1/containers/docker/" + name;
+	string address = stats->slave_ip + ":" + to_string(stats->port) + "/api/v1.1/containers/" + name;
 	while(true){
 		string data = retrieveCadvisorAPI(address);
 		if(data.length()==0){
@@ -85,7 +83,7 @@ void retrieveContainerStats(string name, struct cAdvisorStats* stats){
 		if(curr_stats.size()>0){
  	                cout << "Just parsed stats for " + name << endl;
 			stats->lock->lock();
-			stats->containers[name].stat_types[MEMORY].values.insert(stats->containers[name].stat_types[MEMORY].values.end(), curr_stats.begin(), curr_stats.end());
+			stats->containers[name].stats.insert(stats->containers[name].stats.end(), curr_stats.begin(), curr_stats.end());
 			stats->lock->unlock();
 			this_thread::sleep_for(chrono::seconds(60));
 		}
@@ -108,17 +106,17 @@ static size_t getcAdvisorData(char *ptr, size_t size, size_t nmemb, string *s){
 * given a container, returns the data currently stored in that container as 
 * a string json that can be parsed by the influxdb databate. 
 */
-string jsonContainerStats(struct Container * container){
+string jsonContainerStats(struct Container * container, string slave_ip){
 	string json = "{ \n \"name\": \"" + container->name + INFLUXDB_POINTS;
-	for(size_t i=0; i<container->stat_types[MEMORY].values.size(); i++){
-		struct Stat *cur_stat= &(container->stat_types[MEMORY].values[i]);
-		string curjson="[" + to_string(i+1) + ", " + to_string(cur_stat->mem) +", " + to_string(cur_stat->cpu) + ", \"" + (cur_stat->timestamp) +"\"],\n";
+	for(size_t i=0; i<container->stats.size(); i++){
+		struct Stat *cur_stat= &(container->stats[i]);
+		string curjson="[" + to_string(i+1) + ", \"" + slave_ip + +"\", " +  to_string(cur_stat->values[MEMORY]) +", " + to_string(cur_stat->values[CPU]) + ", \"" + (cur_stat->timestamp) +"\"],\n";
 		json+=curjson; 
 	}
 	if(json.compare("{ \n \"name\": \"" + container->name + INFLUXDB_POINTS)==0){
 		return "";
 	}
-        container->stat_types[MEMORY].values.clear();
+        container->stats.clear();
 	json.erase(json.length()-2, 2);
 	json+="\n]\n },\n ";
 	return json;
@@ -133,7 +131,7 @@ void sendStats(struct cAdvisorStats *stats){
 		stats->lock->lock(); 
 		string json="[\n";
 		for( auto i=stats->containers.begin(); i!=stats->containers.end(); i++){
-			string currentStats=jsonContainerStats(&i->second); 
+			string currentStats=jsonContainerStats(&i->second, stats->slave_ip); 
 			string name = "got stats for: " + i->first; 
 		 	cout << name << endl;
 			json+=currentStats;
@@ -198,22 +196,20 @@ string retrieveCadvisorAPI(string address){
 void findcontainers(string data, struct cAdvisorStats *stats){
 	size_t pos=0;
 	while(true){
-		string name =findData(data, "aliases\":[\"/", "\"", pos);
+		string name =findData(data, "name\":\"/", "\"", pos);
 		if(name.length()==0) break; 
-		stats->lock->lock();
+                if(name.compare("docker")==0) continue;
 		if(stats->containers.find(name)==stats->containers.end()){
+	               stats->lock->lock();
 	                cout << "A new container: " << name << endl;
-			struct StatType stat_type; 
-			stat_type.name=MEMORY; 
 			struct Container container;
 			container.name=name;
-			container.stat_types[MEMORY]=stat_type;
+//FIX DATA STRUCTUER HERERERE!!!!!! 
 			stats->containers[name]=container;
 			stats->lock->unlock();
 			thread t=thread(retrieveContainerStats, name, stats); 
 			t.detach();
 		}
-		else stats->lock->unlock();
 	}
 	
 }
